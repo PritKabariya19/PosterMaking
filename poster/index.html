@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kathiyawad Bhavan</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #fff7e5;
+      font-family: Arial, sans-serif;
+      color: #333;
+    }
+
+    .subtitle { text-align: center; margin-bottom: 24px; }
+
+    .controls {
+      max-width: 550px;
+      margin: 0 auto 25px;
+      padding: 22px;
+      background: #fff;
+      border: 2px solid #e8b63f;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px #00000012;
+    }
+
+    label { display: block; margin: 15px 0 7px; font-weight: bold; }
+
+    input[type="text"], input[type="file"] {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 7px;
+    }
+
+    input[type="range"] { width: 100%; }
+
+    .adjust { margin-top: 10px; padding-top: 4px; border-top: 1px dashed #e8b63f; }
+    .adjust label { font-weight: normal; font-size: 14px; margin: 10px 0 2px; }
+
+    button {
+      padding: 12px 18px;
+      border: none;
+      border-radius: 7px;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 14px 8px 0 0;
+      color: white;
+      background: #a90000;
+    }
+    button:hover { opacity: 0.88; }
+    .download-btn { background: #16783b; }
+    .reset-btn { background: #777; }
+
+    .preview { max-width: 1100px; margin: auto; }
+    .preview h2 { color: #a00000; text-align: center; }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+
+    .hint { font-size: 13px; line-height: 1.6; color: #666; }
+
+    @media (max-width: 600px) {
+      body { padding: 12px; }
+      .controls { padding: 15px; }
+    }
+  </style>
+</head>
+
+<body>
+
+  <p class="subtitle">Upload your photo and add your name to the poster.</p>
+
+  <div class="controls">
+    <label for="userName">Enter Your Name</label>
+    <input type="text" id="userName" placeholder="e.g. Prit Kabariya" maxlength="60">
+
+    <label for="userPhoto">Upload Your Photo</label>
+    <input type="file" id="userPhoto" accept="image/*">
+
+    <div class="adjust">
+      <label for="zoom">Zoom</label>
+      <input type="range" id="zoom" min="1" max="3" step="0.01" value="1">
+
+      <label for="offX">Move left / right</label>
+      <input type="range" id="offX" min="-1" max="1" step="0.01" value="0">
+
+      <label for="offY">Move up / down</label>
+      <input type="range" id="offY" min="-1" max="1" step="0.01" value="0">
+    </div>
+
+    <button type="button" id="previewBtn">Update Poster</button>
+    <button type="button" id="resetBtn" class="reset-btn">Reset Position</button>
+    <button type="button" id="downloadBtn" class="download-btn">Download Poster</button>
+
+    <p class="hint">
+      Supported formats: JPG, PNG, WEBP. Your photo is processed in your browser.
+      Use the sliders to centre your face in the frame.
+    </p>
+  </div>
+
+  <div class="preview">
+    <h2>Poster Preview</h2>
+    <canvas id="posterCanvas" width="1444" height="1024"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("posterCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const nameInput = document.getElementById("userName");
+    const photoInput = document.getElementById("userPhoto");
+    const previewBtn = document.getElementById("previewBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const zoomInput = document.getElementById("zoom");
+    const offXInput = document.getElementById("offX");
+    const offYInput = document.getElementById("offY");
+
+    /*
+      CALIBRATION
+      All values are in the poster's reference size (1490 x 1057).
+      They are scaled automatically to whatever size the poster file is.
+      PHOTO = the grey silhouette area inside the frame.
+      PLATE = the dark-red name plate under the photo.
+      If the photo is off by a few pixels, nudge these numbers.
+    */
+    const REF_W = 1490;
+    const REF_H = 1057;
+
+    // const PHOTO = { x: 60, y: 103, w: 250, h: 202, r: 25 };
+    // const PLATE = { x: 62, y: 324, w: 244, h: 48 };
+
+    const poster = new Image();
+    let uploadedPhoto = null;
+    let posterLoaded = false;
+
+    poster.onload = function () {
+      posterLoaded = true;
+      canvas.width = poster.naturalWidth;
+      canvas.height = poster.naturalHeight;
+      renderPoster();
+    };
+
+    poster.onerror = function () {
+      alert(
+        "Poster image not found. Please keep poster_updated_v6.jpg " +
+        "in the same folder as index.html."
+      );
+    };
+
+    poster.src = "poster_updated_v6.jpg";
+
+    photoInput.addEventListener("change", function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (!file.type.startsWith("image/")) {
+        alert("Please select a valid image file.");
+        photoInput.value = "";
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const image = new Image();
+        image.onload = function () {
+          uploadedPhoto = image;
+          resetAdjust();
+          renderPoster();
+        };
+        image.onerror = function () {
+          alert("Unable to load this photo. Please try another image.");
+        };
+        image.src = e.target.result;
+      };
+      reader.onerror = function () {
+        alert("Unable to read the selected file.");
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function resetAdjust() {
+      zoomInput.value = 1;
+      offXInput.value = 0;
+      offYInput.value = 0;
+    }
+
+    /*
+      Cover-fit: the photo always fills the whole frame with no gaps
+      and no distortion. For portrait photos the crop is biased toward
+      the top so faces are not cut off. Zoom and offsets fine-tune it.
+    */
+    function drawCover(image, x, y, w, h) {
+      const zoom = parseFloat(zoomInput.value) || 1;
+      const ox = parseFloat(offXInput.value) || 0;
+      const oy = parseFloat(offYInput.value) || 0;
+
+      const iw = image.naturalWidth;
+      const ih = image.naturalHeight;
+
+      const baseScale = Math.max(w / iw, h / ih);
+      const scale = baseScale * zoom;
+
+      const sw = w / scale;
+      const sh = h / scale;
+
+      const extraX = iw - sw;
+      const extraY = ih - sh;
+
+      // Centre horizontally; for vertical, default to upper area (faces).
+      const defaultY = ih > iw ? 0.25 : 0.5;
+
+      let sx = extraX * (0.5 + ox * 0.5);
+      let sy = extraY * (defaultY + oy * 0.5);
+
+      sx = Math.min(Math.max(sx, 0), Math.max(extraX, 0));
+      sy = Math.min(Math.max(sy, 0), Math.max(extraY, 0));
+
+      ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
+    }
+
+    function roundRectPath(x, y, w, h, r) {
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(x, y, w, h, r);
+      } else {
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+    }
+
+    function renderPoster() {
+      if (!posterLoaded) return;
+
+      const W = canvas.width;
+      const H = canvas.height;
+      const sx = W / REF_W;
+      const sy = H / REF_H;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(poster, 0, 0, W, H);
+
+      // ---- Photo ----
+      if (uploadedPhoto) {
+        const px = PHOTO.x * sx;
+        const py = PHOTO.y * sy;
+        const pw = PHOTO.w * sx;
+        const ph = PHOTO.h * sy;
+        const pr = PHOTO.r * sx;
+
+        ctx.save();
+        roundRectPath(px, py, pw, ph, pr);
+        ctx.clip();
+        drawCover(uploadedPhoto, px, py, pw, ph);
+        ctx.restore();
+      }
+
+      // ---- Name plate ----
+      const name = nameInput.value.trim();
+
+      if (name) {
+        const x = PLATE.x * sx;
+        const y = PLATE.y * sy;
+        const w = PLATE.w * sx;
+        const h = PLATE.h * sy;
+
+        ctx.save();
+
+        const gradient = ctx.createLinearGradient(x, y, x, y + h);
+        gradient.addColorStop(0, "#a90000");
+        gradient.addColorStop(0.5, "#710000");
+        gradient.addColorStop(1, "#a90000");
+
+        roundRectPath(x, y, w, h, h * 0.35);
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        ctx.strokeStyle = "#ffcf42";
+        ctx.lineWidth = Math.max(2, W / 700);
+        ctx.stroke();
+
+        let fontSize = h * 0.60;
+        const minFontSize = h * 0.30;
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ffffff";
+
+        do {
+          ctx.font = `bold ${fontSize}px Arial`;
+          if (ctx.measureText(name).width <= w * 0.88) break;
+          fontSize -= 1;
+        } while (fontSize > minFontSize);
+
+        ctx.fillText(name, x + w / 2, y + h / 2, w * 0.88);
+        ctx.restore();
+      }
+    }
+
+    previewBtn.addEventListener("click", function () {
+      if (!posterLoaded) { alert("Please wait for the poster to load."); return; }
+      renderPoster();
+    });
+
+    resetBtn.addEventListener("click", function () {
+      resetAdjust();
+      renderPoster();
+    });
+
+    nameInput.addEventListener("input", renderPoster);
+    zoomInput.addEventListener("input", renderPoster);
+    offXInput.addEventListener("input", renderPoster);
+    offYInput.addEventListener("input", renderPoster);
+
+    downloadBtn.addEventListener("click", function () {
+      if (!posterLoaded) { alert("Please wait for the poster to load."); return; }
+
+      if (!nameInput.value.trim() && !uploadedPhoto) {
+        alert("Please enter your name or upload a photo.");
+        return;
+      }
+
+      renderPoster();
+
+      canvas.toBlob(function (blob) {
+        if (!blob) { alert("Unable to generate the poster image."); return; }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "personalized_gujarati_poster.png";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    });
+  </script>
+
+</body>
+</html>
